@@ -70,10 +70,10 @@ function hitungManual(){
     return;
   }
 
-  let bmi = bb / (tb * tb);
+  let bodymaxindeks = bb / (tb * tb);
   manualScore = 0;
 
-  if (bmi >= 25) manualScore += 2;
+  if (bodymaxindeks >= 25) manualScore += 2;
   if (denyut > 90) manualScore += 2;
   if (umur >= 40) manualScore += 1;
   if (umur >= 55) manualScore += 1;
@@ -134,9 +134,22 @@ faceMesh.onResults(results => {
 });
 
 function startScan(){
-  if (manualScore === 0) {
+  if (!manualDone) {
     alert("Isi dan analisis data fisik dulu");
     return;
+  }
+
+  if (!camera) {
+    camera = new Camera(video, {
+      onFrame: async () => {
+        if (scanning) {
+          await faceMesh.send({ image: video });
+        }
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
   }
 
   frameCount = 0;
@@ -144,6 +157,8 @@ function startScan(){
   tensionSum = 0;
   scanning = true;
   scanStatus.innerHTML = "Scanning wajah ±6 detik...";
+}
+
 
   const camera = new Camera(video, {
     onFrame: async () => {
@@ -188,3 +203,4 @@ function hitungFinal(){
 </script>
 </body>
 </html>
+
