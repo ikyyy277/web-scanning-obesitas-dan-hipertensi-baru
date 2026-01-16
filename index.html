@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<title>VISCERA – Integrated Risk Engine</title>
+<title>VISCERA – Health Risk Screening</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -10,13 +10,15 @@
 <style>
 body { font-family: Arial; background:#f2f4f8; }
 .container {
-  width:440px; margin:20px auto; background:#fff;
+  width:420px; margin:20px auto; background:#fff;
   padding:20px; border-radius:10px;
 }
 input, button {
   width:100%; padding:8px; margin-top:6px;
 }
-video { width:100%; border-radius:8px; margin-top:10px; }
+video {
+  width:100%; border-radius:8px; margin-top:10px;
+}
 .result {
   background:#eef2ff; padding:10px; margin-top:10px;
 }
@@ -35,71 +37,74 @@ small { color:#666; }
 <input id="tb" placeholder="Tinggi Badan (cm)">
 <input id="denyut" placeholder="Denyut Nadi / menit">
 
-<button onclick="hitungManual()">Analisis Data Fisik</button>
+<button onclick="analisisManual()">Analisis Data Fisik</button>
 
 <div id="manualResult" class="result"></div>
 
 <hr>
 
 <h4>Scan Wajah</h4>
-<button onclick="startScan()">Mulai Scan (6 detik)</button>
-<video id="video" autoplay></video>
+<button onclick="mulaiScan()">Mulai Scan Wajah (6 detik)</button>
+<video id="video" autoplay muted></video>
 
 <div id="scanStatus"></div>
 <div id="finalResult" class="result"></div>
 </div>
 
 <script>
-let manualScore = 0;
-let visualScore = 0;
+/* ================= DATA FISIK ================= */
+let manualDone = false;
+let manualLevel = "rendah";
 
-function hitungManual(){
+function analisisManual(){
   let umur = parseInt(document.getElementById("umur").value);
   let bb = parseFloat(document.getElementById("bb").value);
   let tb = parseFloat(document.getElementById("tb").value) / 100;
   let denyut = parseInt(document.getElementById("denyut").value);
 
   if (!umur || !bb || !tb || !denyut) {
-    alert("Data belum lengkap");
+    alert("Lengkapi semua data fisik");
     return;
   }
 
-  // validasi logis
   if (tb < 1.3 || tb > 2.1 || bb < 30 || bb > 200) {
     alert("Data fisik tidak masuk akal");
     return;
   }
 
-  let bodymaxindeks = bb / (tb * tb);
-  manualScore = 0;
+  let bmi = bb / (tb * tb);
+  let score = 0;
 
-  if (bodymaxindeks >= 25) manualScore += 2;
-  if (denyut > 90) manualScore += 2;
-  if (umur >= 40) manualScore += 1;
-  if (umur >= 55) manualScore += 1;
+  if (bmi >= 25) score++;
+  if (denyut > 90) score++;
+  if (umur >= 40) score++;
 
-  let level = "rendah";
-  if (manualScore >= 4) level = "tinggi";
-  else if (manualScore >= 2) level = "sedang";
+  if (score >= 2) manualLevel = "tinggi";
+  else if (score === 1) manualLevel = "sedang";
+  else manualLevel = "rendah";
+
+  manualDone = true;
 
   document.getElementById("manualResult").innerHTML =
-    "<b>Analisis Data Fisik</b><br>" +
+    "<b>Hasil Data Fisik</b><br>" +
     "BMI: " + bmi.toFixed(1) + "<br>" +
-    "Risiko dasar: <b>" + level + "</b><br>" +
-    "<small>Silakan lanjutkan pemindaian wajah</small>";
+    "Estimasi risiko dasar: <b>" + manualLevel + "</b><br>" +
+    "<small>Silakan lanjutkan ke pemindaian wajah</small>";
 }
 
-// ================= VISUAL MODULE ==================
-
+/* ================= VISUAL ================= */
 let video = document.getElementById("video");
 let scanStatus = document.getElementById("scanStatus");
+let finalResult = document.getElementById("finalResult");
 
-let frameCount = 0;
-let rednessSum = 0;
-let tensionSum = 0;
+let faceMesh;
+let camera;
 let scanning = false;
+let frame = 0;
+let redness = 0;
+let tension = 0;
 
-const faceMesh = new FaceMesh({
+faceMesh = new FaceMesh({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
 });
 
@@ -110,92 +115,66 @@ faceMesh.setOptions({
   minTrackingConfidence: 0.6
 });
 
-faceMesh.onResults(results => {
+faceMesh.onResults(res => {
   if (!scanning) return;
+  if (!res.multiFaceLandmarks) return;
 
-  if (!results.multiFaceLandmarks) {
-    scanStatus.innerHTML = "Wajah tidak terdeteksi";
-    return;
-  }
+  frame++;
+  let lm = res.multiFaceLandmarks[0];
 
-  frameCount++;
-  let lm = results.multiFaceLandmarks[0];
+  redness += Math.abs(lm[234].x - lm[454].x);
+  tension += Math.abs(lm[172].y - lm[397].y);
 
-  // pipi (indikator sirkulasi)
-  rednessSum += Math.abs(lm[234].x - lm[454].x);
-
-  // rahang (stres otot)
-  tensionSum += Math.abs(lm[172].y - lm[397].y);
-
-  if (frameCount >= 180) {
+  if (frame >= 180) {
     scanning = false;
-    hitungFinal();
+    tampilkanHasil();
   }
 });
 
-function startScan(){
+function mulaiScan(){
   if (!manualDone) {
-    alert("Isi dan analisis data fisik dulu");
+    alert("Analisis data fisik terlebih dahulu");
     return;
   }
+
+  frame = 0;
+  redness = 0;
+  tension = 0;
+  scanning = true;
+  scanStatus.innerHTML = "Scanning wajah ±6 detik...";
 
   if (!camera) {
     camera = new Camera(video, {
       onFrame: async () => {
-        if (scanning) {
-          await faceMesh.send({ image: video });
-        }
+        if (scanning) await faceMesh.send({ image: video });
       },
       width: 640,
       height: 480
     });
     camera.start();
   }
-
-  frameCount = 0;
-  rednessSum = 0;
-  tensionSum = 0;
-  scanning = true;
-  scanStatus.innerHTML = "Scanning wajah ±6 detik...";
 }
 
+function tampilkanHasil(){
+  let r = redness / frame;
+  let t = tension / frame;
 
-  const camera = new Camera(video, {
-    onFrame: async () => {
-      await faceMesh.send({image: video});
-    },
-    width: 640,
-    height: 480
-  });
-  camera.start();
-}
+  let visualLevel = "rendah";
+  if (r > 0.02 || t > 0.015) visualLevel = "sedang";
+  if (r > 0.025 && t > 0.02) visualLevel = "tinggi";
 
-function hitungFinal(){
-  let r = rednessSum / frameCount;
-  let t = tensionSum / frameCount;
+  let finalLevel = manualLevel;
+  if (visualLevel === "tinggi" || manualLevel === "tinggi")
+    finalLevel = "tinggi";
+  else if (visualLevel === "sedang")
+    finalLevel = "sedang";
 
-  visualScore = 0;
-  if (r > 0.02) visualScore += 2;
-  if (t > 0.015) visualScore += 2;
-
-  let finalScore = (manualScore * 0.6) + (visualScore * 0.4);
-
-  let risk = "rendah";
-  if (finalScore >= 3) risk = "tinggi";
-  else if (finalScore >= 1.8) risk = "sedang";
-
-  let confidence = "sedang";
-  if (Math.abs(manualScore - visualScore) <= 1) confidence = "tinggi";
-
-  document.getElementById("finalResult").innerHTML =
+  finalResult.innerHTML =
     "<b>Hasil Skrining Terintegrasi</b><br><br>" +
-    "• Pola sirkulasi wajah menunjukkan " +
-    (r > 0.02 ? "aktivitas meningkat." : "kondisi fisiologis wajar.") + "<br>" +
-    "• Ketegangan otot wajah " +
-    (t > 0.015 ? "terdeteksi." : "dalam batas normal.") + "<br><br>" +
+    "• Analisis wajah menunjukkan indikator sirkulasi dan ketegangan otot tingkat <b>" + visualLevel + "</b>.<br>" +
+    "• Data fisik menunjukkan risiko dasar <b>" + manualLevel + "</b>.<br><br>" +
     "<b>Kesimpulan:</b><br>" +
-    "Estimasi risiko kardiometabolik: <b>" + risk + "</b><br>" +
-    "Tingkat keyakinan: <b>" + confidence + "</b><br><br>" +
+    "Estimasi risiko kardiometabolik: <b>" + finalLevel + "</b><br>" +
     "<small>Hasil ini merupakan skrining awal non-diagnostik.</small>";
 
   scanStatus.innerHTML = "Scan selesai";
